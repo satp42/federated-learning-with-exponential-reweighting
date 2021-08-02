@@ -13,7 +13,7 @@ from functools import partial
 NUM_CLIENTS = 30        # number of clients to sample on each round
 NUM_EPOCHS = 2          # number of times to train for each selected client subset
 NUM_MEGAPOCHS = 2000    # number of times to reselect clients
-BATCH_SIZE = 20
+BATCH_SIZE = 32
 SHUFFLE_BUFFER = 100
 PREFETCH_BUFFER = 10
 
@@ -45,8 +45,9 @@ def model_factory(spec):
         tf.keras.layers.Dropout(0.1),
 
         tf.keras.layers.Flatten(),
-        tf.keras.layers.Dense(64, activation='relu'),
-        tf.keras.layers.Dense(2)
+        tf.keras.layers.Dense(685, activation='relu'),
+        tf.keras.layers.Dense(303, activation='relu'),
+        tf.keras.layers.Dense(2, activation='softmax')
 
         # tf.keras.layers.Conv2D(32, (21, 21), input_shape=(IMG_WIDTH, IMG_HEIGHT, 3)),
         # tf.keras.layers.MaxPooling2D((2, 2)),
@@ -99,10 +100,9 @@ if __name__ == '__main__':
 
     state = iterative_process.initialize()
 
-    # TODO: move sampled clients into megapochs loop
-    sampled_clients = np.random.choice(celeba_train.client_ids, NUM_CLIENTS)
-    dataset = make_federated_data(celeba_train, sampled_clients)
     for round_num in range(0, NUM_MEGAPOCHS):
+        sampled_clients = np.random.choice(celeba_train.client_ids, NUM_CLIENTS)
+        dataset = make_federated_data(celeba_train, sampled_clients)
         state, metrics = iterative_process.next(state, dataset)
         print('round {:2d}, metrics={}'.format(round_num+1, metrics))
         wandb.log(metrics['train'])
