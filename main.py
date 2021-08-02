@@ -10,16 +10,17 @@ import wandb
 import collections
 from functools import partial
 from datetime import datetime
+import gc
 
-NUM_CLIENTS = 20        # number of clients to sample on each round
+NUM_CLIENTS = 60       # number of clients to sample on each round
 NUM_EPOCHS = 80         # number of times to train for each selected client subset
 NUM_MEGAPOCHS = 8000    # number of times to reselect clients
 BATCH_SIZE = 32
 SHUFFLE_BUFFER = 100
 PREFETCH_BUFFER = 10
 
-CLIENT_LR = 0.001
-CENTRAL_LR = 0.003
+CLIENT_LR = 0.003
+CENTRAL_LR = 0.001
 
 IMG_WIDTH = 84
 IMG_HEIGHT = 84
@@ -52,15 +53,6 @@ def model_factory(spec):
         tf.keras.layers.Dense(685, activation='relu'),
         tf.keras.layers.Dense(303, activation='relu'),
         tf.keras.layers.Dense(2, activation='softmax')
-
-        # tf.keras.layers.Conv2D(32, (21, 21), input_shape=(IMG_WIDTH, IMG_HEIGHT, 3)),
-        # tf.keras.layers.MaxPooling2D((2, 2)),
-        # tf.keras.layers.BatchNormalization(momentum=0.1, epsilon=1e-5),
-
-        # tf.keras.layers.InputLayer(input_shape=(21168,)),
-        # tf.keras.layers.Dense(1000, kernel_initializer='zeros'),
-        # tf.keras.layers.Dense(2, kernel_initializer='zeros'),
-        # tf.keras.layers.Softmax(),
     ])
 
     return tff.learning.from_keras_model(
@@ -80,7 +72,7 @@ if __name__ == '__main__':
 
     # # print(len(celeba_train.client_ids), "\n".join([x for x in celeba_train.element_type_structure]))
     #
-    dataset = celeba_train.create_tf_dataset_for_client(celeba_train.client_ids[0])
+    # dataset = celeba_train.create_tf_dataset_for_client(celeba_train.client_ids[0])
     # print(dataset.element_spec)
 
     # figure = plt.figure(figsize=(20, 4))
@@ -92,8 +84,8 @@ if __name__ == '__main__':
     #     j += 1
     # plt.show()
 
-    dataset = preprocess(dataset)
-    batch = tf.nest.map_structure(lambda x: x.numpy(), next(iter(dataset)))
+    # dataset = preprocess(dataset)
+    # batch = tf.nest.map_structure(lambda x: x.numpy(), next(iter(dataset)))
     #
     # print(list(batch.items())[0][1].shape)
 
@@ -104,8 +96,11 @@ if __name__ == '__main__':
         client_optimizer_fn=lambda: tf.keras.optimizers.SGD(learning_rate=CLIENT_LR),
         server_optimizer_fn=lambda: tf.keras.optimizers.SGD(learning_rate=CENTRAL_LR))
 
+    federated_eval = tff.learning.build_federated_evaluation(partial(model_factory, dataset_spec))  # https://stackoverflow.com/a/56811627/10372825
+    eval_dataset = make_federated_data(celeba_test, celeba_test.client_ids[:50])
+
     state = iterative_process.initialize()
-    print('total clients:', len(celeba_train.client_ids))
+    print(f"total clients: {len(celeba_train.client_ids)} train, {len(celeba_test.client_ids)} test")
 
     for round_num in range(0, NUM_MEGAPOCHS):
         try:
@@ -115,8 +110,11 @@ if __name__ == '__main__':
             dataset = make_federated_data(celeba_train, sampled_clients)
             print('training clients')
             state, metrics = iterative_process.next(state, dataset)
-            print('round {:2d}, metrics={}'.format(round_num+1, metrics))
-            wandb.log({ **metrics['train'], 'step': round_num * NUM_EPOCHS })
+            gc.collect()
+            print('validating model')
+            eval_metrics = federated_eval(state.model, eval_dataset)
+            print('round {:2d}, metrics={}, evalmetrics={}'.format(round_num+1, metrics['train'], eval_metrics))
+            wandb.log({ **metrics['train'], 'step': round_num * NUM_EPOCHS, 'test_accuracy': eval_metrics['eval']['sparse_categorical_accuracy'] })
         except KeyboardInterrupt:
             print('\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\ninterrupted at', datetime.now().strftime("%T"))
             input('press enter to continue...')
