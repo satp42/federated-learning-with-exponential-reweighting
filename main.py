@@ -9,13 +9,17 @@ import wandb
 
 import collections
 from functools import partial
+from datetime import datetime
 
-NUM_CLIENTS = 30        # number of clients to sample on each round
-NUM_EPOCHS = 2          # number of times to train for each selected client subset
-NUM_MEGAPOCHS = 2000    # number of times to reselect clients
+NUM_CLIENTS = 20        # number of clients to sample on each round
+NUM_EPOCHS = 80         # number of times to train for each selected client subset
+NUM_MEGAPOCHS = 8000    # number of times to reselect clients
 BATCH_SIZE = 32
 SHUFFLE_BUFFER = 100
 PREFETCH_BUFFER = 10
+
+CLIENT_LR = 0.001
+CENTRAL_LR = 0.003
 
 IMG_WIDTH = 84
 IMG_HEIGHT = 84
@@ -68,6 +72,8 @@ def model_factory(spec):
 
 if __name__ == '__main__':
     np.random.seed(1336)
+    nest_asyncio.apply()
+
     celeba_train, celeba_test = tff.simulation.datasets.celeba.load_data()
     dataset_spec = preprocess(celeba_train.create_tf_dataset_for_client(
         celeba_train.client_ids[0])).element_spec
@@ -95,14 +101,22 @@ if __name__ == '__main__':
 
     iterative_process = tff.learning.build_federated_averaging_process(
         partial(model_factory, dataset_spec),
-        client_optimizer_fn=lambda: tf.keras.optimizers.SGD(learning_rate=0.002),
-        server_optimizer_fn=lambda: tf.keras.optimizers.SGD(learning_rate=0.001))
+        client_optimizer_fn=lambda: tf.keras.optimizers.SGD(learning_rate=CLIENT_LR),
+        server_optimizer_fn=lambda: tf.keras.optimizers.SGD(learning_rate=CENTRAL_LR))
 
     state = iterative_process.initialize()
+    print('total clients:', len(celeba_train.client_ids))
 
     for round_num in range(0, NUM_MEGAPOCHS):
-        sampled_clients = np.random.choice(celeba_train.client_ids, NUM_CLIENTS)
-        dataset = make_federated_data(celeba_train, sampled_clients)
-        state, metrics = iterative_process.next(state, dataset)
-        print('round {:2d}, metrics={}'.format(round_num+1, metrics))
-        wandb.log(metrics['train'])
+        try:
+            print('sampling clients')
+            sampled_clients = np.random.choice(celeba_train.client_ids, NUM_CLIENTS)
+            print('making dataset')
+            dataset = make_federated_data(celeba_train, sampled_clients)
+            print('training clients')
+            state, metrics = iterative_process.next(state, dataset)
+            print('round {:2d}, metrics={}'.format(round_num+1, metrics))
+            wandb.log({ **metrics['train'], 'step': round_num * NUM_EPOCHS })
+        except KeyboardInterrupt:
+            print('\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\ninterrupted at', datetime.now().strftime("%T"))
+            input('press enter to continue...')
