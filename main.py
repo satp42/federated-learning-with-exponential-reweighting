@@ -12,15 +12,15 @@ from functools import partial
 from datetime import datetime
 import gc
 
-NUM_CLIENTS = 60       # number of clients to sample on each round
-NUM_EPOCHS = 80         # number of times to train for each selected client subset
+NUM_CLIENTS = 50       # number of clients to sample on each round
+NUM_EPOCHS = 100         # number of times to train for each selected client subset
 NUM_MEGAPOCHS = 8000    # number of times to reselect clients
 BATCH_SIZE = 32
 SHUFFLE_BUFFER = 100
 PREFETCH_BUFFER = 10
 
-CLIENT_LR = 0.003
-CENTRAL_LR = 0.001
+CLIENT_LR = 0.001
+CENTRAL_LR = 0.003
 
 IMG_WIDTH = 84
 IMG_HEIGHT = 84
@@ -51,7 +51,7 @@ def model_factory(spec):
 
         tf.keras.layers.Flatten(),
         tf.keras.layers.Dense(685, activation='relu'),
-        tf.keras.layers.Dense(303, activation='relu'),
+        # tf.keras.layers.Dense(303, activation='relu'),
         tf.keras.layers.Dense(2, activation='softmax')
     ])
 
@@ -63,31 +63,12 @@ def model_factory(spec):
     )
 
 if __name__ == '__main__':
-    np.random.seed(1336)
+    np.random.seed(2048)
     nest_asyncio.apply()
 
     celeba_train, celeba_test = tff.simulation.datasets.celeba.load_data()
     dataset_spec = preprocess(celeba_train.create_tf_dataset_for_client(
         celeba_train.client_ids[0])).element_spec
-
-    # # print(len(celeba_train.client_ids), "\n".join([x for x in celeba_train.element_type_structure]))
-    #
-    # dataset = celeba_train.create_tf_dataset_for_client(celeba_train.client_ids[0])
-    # print(dataset.element_spec)
-
-    # figure = plt.figure(figsize=(20, 4))
-    # j = 0
-    # for example in dataset.take(40):
-    #     plt.subplot(4, 10, j+1)
-    #     plt.imshow(example['image'].numpy(), cmap='gray', aspect='equal')
-    #     plt.axis('off')
-    #     j += 1
-    # plt.show()
-
-    # dataset = preprocess(dataset)
-    # batch = tf.nest.map_structure(lambda x: x.numpy(), next(iter(dataset)))
-    #
-    # print(list(batch.items())[0][1].shape)
 
     wandb.init(project="federated-celeba-vanilla", entity="exr0nprojects")
 
@@ -100,12 +81,15 @@ if __name__ == '__main__':
     eval_dataset = make_federated_data(celeba_test, celeba_test.client_ids[:50])
 
     state = iterative_process.initialize()
+    seen_ids = set()
     print(f"total clients: {len(celeba_train.client_ids)} train, {len(celeba_test.client_ids)} test")
 
     for round_num in range(0, NUM_MEGAPOCHS):
         try:
             print('sampling clients')
             sampled_clients = np.random.choice(celeba_train.client_ids, NUM_CLIENTS)
+            for client in sampled_clients:
+                seen_ids.add(client)
             print('making dataset')
             dataset = make_federated_data(celeba_train, sampled_clients)
             print('training clients')
@@ -114,7 +98,14 @@ if __name__ == '__main__':
             print('validating model')
             eval_metrics = federated_eval(state.model, eval_dataset)
             print('round {:2d}, metrics={}, evalmetrics={}'.format(round_num+1, metrics['train'], eval_metrics))
-            wandb.log({ **metrics['train'], 'step': round_num * NUM_EPOCHS, 'test_accuracy': eval_metrics['eval']['sparse_categorical_accuracy'] })
+            wandb.log({
+                **metrics['train'],
+                'step': round_num * NUM_EPOCHS,
+                'test_accuracy': eval_metrics['eval']['sparse_categorical_accuracy'],
+                'test_loss': eval_metrics['eval']['loss'],
+                'client_coverage': len(seen_ids)/len(celeba_train.client_ids)
+            })
+            # state.model.save('model.model')
         except KeyboardInterrupt:
-            print('\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\ninterrupted at', datetime.now().strftime("%T"))
+            print('\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\ninterrupted at', datetime.now().strftime("%T"))
             input('press enter to continue...')
