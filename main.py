@@ -76,6 +76,14 @@ if __name__ == '__main__':
     run = wandb.init(project="federated-celeba-vanilla", entity="exr0nprojects")
     print('running', run.name)
 
+    NUM_MEGAPOCHS = run.config.central_epochs
+    NUM_CLIENTS =   run.config.central_batch
+    CENTRAL_LR =    run.config.central_lr
+
+    NUM_EPOCHS =    run.config.client_epochs
+    BATCH_SIZE =    run.config.client_batch
+    CLIENT_LR =     run.config.client_lr
+
     iterative_process = tff.learning.build_federated_averaging_process(
         partial(model_factory, dataset_spec),
         client_optimizer_fn=lambda: tf.keras.optimizers.SGD(learning_rate=CLIENT_LR),
@@ -89,22 +97,32 @@ if __name__ == '__main__':
     seen_ids = set()
     print(f"total clients: {len(celeba_train.client_ids)} train, {len(celeba_test.client_ids)} test")
 
+    # sampled_clients = np.random.choice(celeba_train.client_ids, NUM_CLIENTS)
+    sampled_clients = celeba_train.client_ids[:NUM_CLIENTS]
+    for client in sampled_clients:
+        seen_ids.add(client)
+    dataset = make_federated_data(celeba_train, sampled_clients)
+
+
     for round_num in range(0, NUM_MEGAPOCHS):
         try:
             start_time = time()
-            sampled_clients = np.random.choice(celeba_train.client_ids, NUM_CLIENTS)
-            for client in sampled_clients:
-                seen_ids.add(client)
-            dataset = make_federated_data(celeba_train, sampled_clients)
+            # sampled_clients = np.random.choice(celeba_train.client_ids, NUM_CLIENTS)
+            # for client in sampled_clients:
+            #     seen_ids.add(client)
+            # dataset = make_federated_data(celeba_train, sampled_clients)
             state, metrics = iterative_process.next(state, dataset)
             gc.collect()
             eval_metrics = federated_eval(state.model, eval_dataset)
+            overfit_eval_metrics = federated_eval(state.model, dataset)
             print('round {:3d}, time {}, metrics={}, evalmetrics={}'.format(round_num+1, time() - start_time, metrics['train'], eval_metrics))
             wandb.log({
                 **metrics['train'],
                 'step': round_num * NUM_EPOCHS,
                 'test_accuracy': eval_metrics['eval']['sparse_categorical_accuracy'],
                 'test_loss': eval_metrics['eval']['loss'],
+                'train_acc': overfit_eval_metrics['eval']['sparse_categorical_accuracy'],
+                'train_loss': overfit_eval_metrics['eval']['loss'],
                 'client_coverage': len(seen_ids)/len(celeba_train.client_ids),
                 'time_taken': time() - start_time
             })
