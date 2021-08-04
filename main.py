@@ -6,7 +6,6 @@ import tensorflow as tf
 import tensorflow_federated as tff
 from matplotlib import pyplot as plt
 import wandb
-from tqdm import trange
 
 import collections
 from functools import partial
@@ -15,11 +14,11 @@ from time import time
 import gc
 
 NUM_MEGAPOCHS = 20000    # number of times to reselect clients
-NUM_CLIENTS = 100         # number of clients to sample on each round
+NUM_CLIENTS = 50         # number of clients to sample on each round
 CENTRAL_LR = 0.006
 
 NUM_EPOCHS = 100          # number of times to train for each selected client subset
-BATCH_SIZE = 64
+BATCH_SIZE = 32
 CLIENT_LR = 0.001
 
 SHUFFLE_BUFFER = 100
@@ -80,7 +79,8 @@ if __name__ == '__main__':
     iterative_process = tff.learning.build_federated_averaging_process(
         partial(model_factory, dataset_spec),
         client_optimizer_fn=lambda: tf.keras.optimizers.SGD(learning_rate=CLIENT_LR),
-        server_optimizer_fn=lambda: tf.keras.optimizers.SGD(learning_rate=CENTRAL_LR))
+        server_optimizer_fn=lambda: tf.keras.optimizers.SGD(learning_rate=CENTRAL_LR),
+        use_experimental_simulation_loop=True)
 
     federated_eval = tff.learning.build_federated_evaluation(partial(model_factory, dataset_spec))  # https://stackoverflow.com/a/56811627/10372825
     eval_dataset = make_federated_data(celeba_test, celeba_test.client_ids[:50])
@@ -89,7 +89,7 @@ if __name__ == '__main__':
     seen_ids = set()
     print(f"total clients: {len(celeba_train.client_ids)} train, {len(celeba_test.client_ids)} test")
 
-    for round_num in trange(0, NUM_MEGAPOCHS):
+    for round_num in range(0, NUM_MEGAPOCHS):
         try:
             start_time = time()
             sampled_clients = np.random.choice(celeba_train.client_ids, NUM_CLIENTS)
@@ -99,7 +99,7 @@ if __name__ == '__main__':
             state, metrics = iterative_process.next(state, dataset)
             gc.collect()
             eval_metrics = federated_eval(state.model, eval_dataset)
-            # print('round {:2d}, metrics={}, evalmetrics={}'.format(round_num+1, metrics['train'], eval_metrics))
+            print('round {:3d}, time {}, metrics={}, evalmetrics={}'.format(round_num+1, time() - start_time, metrics['train'], eval_metrics))
             wandb.log({
                 **metrics['train'],
                 'step': round_num * NUM_EPOCHS,
