@@ -6,15 +6,17 @@ import tensorflow as tf
 import tensorflow_federated as tff
 from matplotlib import pyplot as plt
 import wandb
+from tqdm import trange
 
 import collections
 from functools import partial
 from datetime import datetime
+from time import time
 import gc
 
 NUM_CLIENTS = 50       # number of clients to sample on each round
 NUM_EPOCHS = 100         # number of times to train for each selected client subset
-NUM_MEGAPOCHS = 8000    # number of times to reselect clients
+NUM_MEGAPOCHS = 20000    # number of times to reselect clients
 BATCH_SIZE = 32
 SHUFFLE_BUFFER = 100
 PREFETCH_BUFFER = 10
@@ -63,14 +65,16 @@ def model_factory(spec):
     )
 
 if __name__ == '__main__':
-    np.random.seed(2048)
+    np.random.seed(3091)
     nest_asyncio.apply()
+    fcm = tff.simulation.FileCheckpointManager('checkpoint/')
 
     celeba_train, celeba_test = tff.simulation.datasets.celeba.load_data()
     dataset_spec = preprocess(celeba_train.create_tf_dataset_for_client(
         celeba_train.client_ids[0])).element_spec
 
-    wandb.init(project="federated-celeba-vanilla", entity="exr0nprojects")
+    run = wandb.init(project="federated-celeba-vanilla", entity="exr0nprojects")
+    print('running', run.name)
 
     iterative_process = tff.learning.build_federated_averaging_process(
         partial(model_factory, dataset_spec),
@@ -84,28 +88,29 @@ if __name__ == '__main__':
     seen_ids = set()
     print(f"total clients: {len(celeba_train.client_ids)} train, {len(celeba_test.client_ids)} test")
 
-    for round_num in range(0, NUM_MEGAPOCHS):
+    for round_num in trange(0, NUM_MEGAPOCHS):
         try:
-            print('sampling clients')
+            start_time = time()
             sampled_clients = np.random.choice(celeba_train.client_ids, NUM_CLIENTS)
             for client in sampled_clients:
                 seen_ids.add(client)
-            print('making dataset')
             dataset = make_federated_data(celeba_train, sampled_clients)
-            print('training clients')
             state, metrics = iterative_process.next(state, dataset)
             gc.collect()
-            print('validating model')
             eval_metrics = federated_eval(state.model, eval_dataset)
-            print('round {:2d}, metrics={}, evalmetrics={}'.format(round_num+1, metrics['train'], eval_metrics))
+            # print('round {:2d}, metrics={}, evalmetrics={}'.format(round_num+1, metrics['train'], eval_metrics))
             wandb.log({
                 **metrics['train'],
                 'step': round_num * NUM_EPOCHS,
                 'test_accuracy': eval_metrics['eval']['sparse_categorical_accuracy'],
                 'test_loss': eval_metrics['eval']['loss'],
-                'client_coverage': len(seen_ids)/len(celeba_train.client_ids)
+                'client_coverage': len(seen_ids)/len(celeba_train.client_ids),
+                'time_taken': time() - start_time
             })
-            # state.model.save('model.model')
+            if round_num % 30 == 29:
+            # if True:
+                fcm.save_checkpoint(state, round_num+1)
+                print('saved checkpoint', run.name, round_num+1)
         except KeyboardInterrupt:
             print('\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\ninterrupted at', datetime.now().strftime("%T"))
             input('press enter to continue...')
