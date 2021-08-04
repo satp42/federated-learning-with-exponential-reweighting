@@ -14,15 +14,16 @@ from datetime import datetime
 from time import time
 import gc
 
-NUM_CLIENTS = 50       # number of clients to sample on each round
-NUM_EPOCHS = 100         # number of times to train for each selected client subset
 NUM_MEGAPOCHS = 20000    # number of times to reselect clients
-BATCH_SIZE = 32
+NUM_CLIENTS = 100         # number of clients to sample on each round
+CENTRAL_LR = 0.006
+
+NUM_EPOCHS = 100          # number of times to train for each selected client subset
+BATCH_SIZE = 64
+CLIENT_LR = 0.001
+
 SHUFFLE_BUFFER = 100
 PREFETCH_BUFFER = 10
-
-CLIENT_LR = 0.001
-CENTRAL_LR = 0.003
 
 IMG_WIDTH = 84
 IMG_HEIGHT = 84
